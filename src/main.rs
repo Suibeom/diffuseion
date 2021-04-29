@@ -47,7 +47,10 @@ fn main() {
             *pixel = image::Rgb([h, 0, k]);
         }
 
-        imgbuf.save(format!("Frame{:0>6}.png", t)).unwrap();
+        match imgbuf.save(format!("imgs/Frame{:0>6}.png", t)) {
+            Ok(_) => {}
+            Err(_) => std::fs::create_dir("./imgs").unwrap(),
+        }
     }
     println!("{}", now.elapsed().as_millis());
 }
