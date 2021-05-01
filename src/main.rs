@@ -1,11 +1,16 @@
 use core::f64;
+use rand::Rng;
 use std::time::Instant;
-const H: usize = 300;
-const W: usize = 300;
+const H: usize = 500;
+const W: usize = 500;
 const D_A: f64 = 1.0;
-const D_B: f64 = 0.7;
-const F: f64 = 0.005;
-const K: f64 = 0.042983;
+const D_B: f64 = 0.5;
+const F_MIN: f64 = 0.0;
+const F_MAX: f64 = 0.025;
+const K_MIN: f64 = 0.015;
+const K_MAX: f64 = 0.06;
+const D_T: f64 = 1.0;
+const FRAMES: usize = 30000;
 fn main() {
     let now = Instant::now();
     let mut a_concen: [f64; H * W] = [1.0; H * W];
@@ -13,23 +18,30 @@ fn main() {
     let mut a_buffer: [f64; H * W] = [0.0; H * W];
     let mut b_buffer: [f64; H * W] = [0.0; H * W];
 
-    put_some_b_in(&mut b_concen);
+    random_seed_b(&mut b_concen);
 
     println!("Starting.");
-    for t in 0..10000 {
+    for t in 0..FRAMES {
         for j in 1..W - 1 {
             for i in 1..H - 1 {
                 a_buffer[i + j * H] = (a_concen[i + j * H]
-                    + (D_A * y3_laplace(i, j, &a_concen)
+                    + (D_A * three_by_three_laplacian(i, j, &a_concen)
                         - a_concen[i + j * H] * b_concen[i + j * H] * b_concen[i + j * H]
-                        + F * (1.0 - a_concen[i + j * H])))
+                        + lerp(F_MIN, F_MAX, i, H) * (1.0 - a_concen[i + j * H]) * D_T))
                     .max(0.0)
                     .min(1.0);
 
                 b_buffer[i + j * H] = (b_concen[i + j * H]
-                    + (D_B * y3_laplace(i, j, &b_concen)
+                    + (D_B * three_by_three_laplacian(i, j, &b_concen)
                         + a_concen[i + j * H] * b_concen[i + j * H] * b_concen[i + j * H]
-                        - (K + F) * b_concen[i + j * H]))
+                        - (lerp(
+                            lerp(K_MIN, (8.0 * K_MAX + 2.0 * K_MIN) * 0.1, i, H),
+                            K_MAX,
+                            j,
+                            W,
+                        ) + lerp(F_MIN, F_MAX, i, H))
+                            * b_concen[i + j * H])
+                        * D_T)
                     .max(0.0)
                     .min(1.0);
             }
@@ -41,10 +53,29 @@ fn main() {
         let mut imgbuf = image::ImageBuffer::new(H as u32, W as u32);
 
         for (x, y, pixel) in imgbuf.enumerate_pixels_mut() {
-            let h = (256.0 * b_concen[x as usize + y as usize * H]) as u8;
-            let k = (64.0 * a_concen[x as usize + y as usize * H]) as u8;
+            let h = b_concen[x as usize + y as usize * H];
+            let k = a_concen[x as usize + y as usize * H];
 
-            *pixel = image::Rgb([h, 0, k]);
+            let l = ((h - k) * (h - k) < 0.01) as u8;
+            let l_d = (((h - k) + 0.1) * 5.0 * 255.0) as u8;
+
+            /*
+            Here's the regular branched logic equivalent of the above two lines:
+            if |h-k| <0.1 {
+            l = ((h-k) + 0.1) * 5 * 255.0
+                ^^^^^^^^^^^^^^^^^
+                rescaled to betw.
+                0.0 and 1.0
+            } else if h > k {
+             l = 255
+            } else {
+             l = 0
+            }
+            This cranks down the dynamic range to give that nice blown-out look.
+            */
+
+            let l = 255 * (1 - l) * (h > k) as u8 + (l * l_d);
+            *pixel = image::Luma([l]);
         }
 
         match imgbuf.save(format!("imgs/Frame{:0>6}.png", t)) {
@@ -55,51 +86,21 @@ fn main() {
     println!("{}", now.elapsed().as_millis());
 }
 
-fn put_some_b_in(grid: &mut [f64; H * W]) {
-    for i in 0..W {
-        for j in 0..H {
-            if (i - 10).pow(2) + (j - 3).pow(2) < 100 {
-                grid[i + j * H] = 1.0;
-            }
+fn lerp(min: f64, max: f64, step: usize, steps: usize) -> f64 {
+    min + (max - min) * (step as f64 / steps as f64)
+}
+
+fn random_seed_b(grid: &mut [f64; H * W]) {
+    let mut rng = rand::thread_rng();
+
+    for i in 1..W - 1 {
+        for j in 1..H - 1 {
+            grid[i + j * H] = rng.gen_range(0.0..0.145);
         }
     }
-    // for i in 0..W {
-    //     for j in 0..H {
-    //         if (i - 200).pow(2) + (j - 10).pow(2) < 100 {
-    //             grid[i + j * H] = 1.0;
-    //         }
-    //     }
-    // }
 }
 
-fn reflecting_laplace(x: usize, y: usize, grid: &[f64; H * W]) -> f64 {
-    let x_lower = (x > 0) as u8; //this is a terrible hack
-    let x_upper = (x < H - 1) as u8;
-    let y_lower = (y > 0) as u8;
-    let y_upper = (y < W - 1) as u8;
-    let mut lap = 0.0;
-
-    let deficit = 4 - x_lower - x_upper - y_lower - y_upper;
-    if x > 0 {
-        lap += grid[(x - 1) + H * y] * 0.25;
-    }
-    if x < W - 1 {
-        lap += grid[(x + 1) + H * y] * 0.25;
-    }
-    if y > 0 {
-        lap += grid[x + H * (y - 1)] * 0.25;
-    }
-    if y < H - 1 {
-        lap += grid[x + H * (y + 1)] * 0.25;
-    }
-    lap += deficit as f64 * grid[x + H * y];
-
-    lap -= grid[x + H * y];
-
-    lap
-}
-
-fn y3_laplace(x: usize, y: usize, grid: &[f64; H * W]) -> f64 {
+fn three_by_three_laplacian(x: usize, y: usize, grid: &[f64; H * W]) -> f64 {
     let mut lap = 0.0;
 
     lap += grid[(x - 1) + H * y] * 0.2;
