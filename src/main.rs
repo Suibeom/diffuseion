@@ -5,9 +5,9 @@ const H: usize = 500;
 const W: usize = 500;
 const D_A: f64 = 1.0;
 const D_B: f64 = 0.5;
-const F_MIN: f64 = 0.0;
+const F_MIN: f64 = 0.02;
 const F_MAX: f64 = 0.025;
-const K_MIN: f64 = 0.015;
+const K_MIN: f64 = 0.045;
 const K_MAX: f64 = 0.06;
 const D_T: f64 = 1.0;
 const FRAMES: usize = 30000;
@@ -35,7 +35,7 @@ fn main() {
                     + (D_B * three_by_three_laplacian(i, j, &b_concen)
                         + a_concen[i + j * H] * b_concen[i + j * H] * b_concen[i + j * H]
                         - (lerp(
-                            lerp(K_MIN, (8.0 * K_MAX + 2.0 * K_MIN) * 0.1, i, H),
+                            lerp(K_MIN, (5.0 * K_MAX + 5.0 * K_MIN) * 0.1, i, H),
                             K_MAX,
                             j,
                             W,
